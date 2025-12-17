@@ -19,18 +19,27 @@ class ImageGenerationService {
 
     /**
      * Generate an image using available providers with smart fallback
+     * Priority: Pollinations (FREE, no key) -> HuggingFace -> Gemini -> Replicate -> Simulation
      */
     async generateImage(prompt, options = {}) {
         const errors = []
         let result = null
 
+        // 0. TRY POLLINATIONS.AI FIRST (FREE, NO API KEY, ALWAYS WORKS FROM BROWSER!)
+        try {
+            console.log('Trying Pollinations.ai (FREE, no API key needed)...')
+            result = await this.generateWithPollinations(prompt, options)
+            if (result) return result
+        } catch (err) {
+            console.warn('Pollinations.ai failed:', err)
+            errors.push(`Pollinations: ${err.message}`)
+        }
+
         // 1. Try Hugging Face (Multiple Models)
         if (this.huggingFaceToken) {
             const hfModels = [
                 'black-forest-labs/FLUX.1-dev',
-                'stabilityai/stable-diffusion-xl-base-1.0',
-                'stabilityai/stable-diffusion-3-medium-diffusers',
-                'runwayml/stable-diffusion-v1-5'
+                'stabilityai/stable-diffusion-xl-base-1.0'
             ]
 
             for (const model of hfModels) {
@@ -45,39 +54,17 @@ class ImageGenerationService {
             }
         }
 
-        // 2. Try Gemini (Multiple Versions including Imagen 2/3)
+        // 2. Try Gemini (if key provided)
         if (this.apiKey) {
-            const geminiModels = [
-                'imagen-3.0-generate-001',
-                'image-generation-001',
-                'image-generation-002' // Imagen 2
-            ]
-
-            for (const model of geminiModels) {
-                try {
-                    console.log(`Trying Gemini model: ${model}`)
-                    result = await this.generateWithGemini(prompt, model)
-                    if (result) return result
-                } catch (err) {
-                    console.warn(`Gemini ${model} failed:`, err)
-                    errors.push(`Gemini ${model}: ${err.message}`)
-                }
-            }
-        }
-
-        // 3. Try Replicate (Last resort due to CORS)
-        if (this.replicateApiKey) {
             try {
-                result = await this.generateWithReplicate(prompt, options)
+                result = await this.generateWithGemini(prompt, 'imagen-3.0-generate-001')
                 if (result) return result
             } catch (err) {
-                console.warn('Replicate Generation failed:', err)
-                errors.push(`Replicate: ${err.message}`)
+                errors.push(`Gemini: ${err.message}`)
             }
         }
 
-        // 4. FINAL FALLBACK: Simulation
-        // If all real generation fails, return a simulated result so the user isn't stuck
+        // 3. FINAL FALLBACK: Simulation
         console.warn('All generation methods failed, switching to simulation fallback.')
         return {
             status: 'COMPLETED',
@@ -85,6 +72,41 @@ class ImageGenerationService {
             meta: { provider: 'simulation', errors: errors },
             isFallback: true
         }
+    }
+
+    /**
+     * Generate image using Pollinations.ai (FREE, NO API KEY REQUIRED!)
+     * This service is CORS-enabled and works directly from browsers.
+     */
+    async generateWithPollinations(prompt, options = {}) {
+        // Pollinations.ai provides a simple URL-based API
+        const encodedPrompt = encodeURIComponent(prompt)
+        const width = options.width || 1024
+        const height = options.height || 1024
+        const model = 'flux' // or 'turbo' for faster
+
+        // The URL directly returns an image
+        const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=${model}&nologo=true`
+
+        // Fetch the image and convert to base64 for consistency
+        const response = await fetch(imageUrl)
+
+        if (!response.ok) {
+            throw new Error('Pollinations.ai request failed')
+        }
+
+        const blob = await response.blob()
+
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve({
+                status: 'COMPLETED',
+                image: reader.result,
+                meta: { provider: 'pollinations', model: model, url: imageUrl }
+            })
+            reader.onerror = reject
+            reader.readAsDataURL(blob)
+        })
     }
 
     async generateWithHuggingFace(prompt, model) {
