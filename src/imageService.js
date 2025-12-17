@@ -19,13 +19,25 @@ class ImageGenerationService {
 
     /**
      * Generate an image using available providers with smart fallback
-     * Priority: Pollinations (FREE, no key) -> HuggingFace -> Gemini -> Replicate -> Simulation
+     * Priority: Gemini (if key) -> Pollinations (FREE) -> HuggingFace -> Simulation
      */
     async generateImage(prompt, options = {}) {
         const errors = []
         let result = null
 
-        // 0. TRY POLLINATIONS.AI FIRST (FREE, NO API KEY, ALWAYS WORKS FROM BROWSER!)
+        // 0. TRY GEMINI FIRST (if user has API key - preferred by user)
+        if (this.apiKey) {
+            try {
+                console.log('Trying Gemini 2.0 Flash/Pro for image generation...')
+                result = await this.generateWithGemini(prompt)
+                if (result) return result
+            } catch (err) {
+                console.warn('Gemini image generation failed:', err)
+                errors.push(`Gemini: ${err.message}`)
+            }
+        }
+
+        // 1. TRY POLLINATIONS.AI (FREE, NO API KEY, ALWAYS WORKS FROM BROWSER!)
         try {
             console.log('Trying Pollinations.ai (FREE, no API key needed)...')
             result = await this.generateWithPollinations(prompt, options)
@@ -35,7 +47,7 @@ class ImageGenerationService {
             errors.push(`Pollinations: ${err.message}`)
         }
 
-        // 1. Try Hugging Face (Multiple Models)
+        // 2. Try Hugging Face (Multiple Models)
         if (this.huggingFaceToken) {
             const hfModels = [
                 'black-forest-labs/FLUX.1-dev',
@@ -51,16 +63,6 @@ class ImageGenerationService {
                     console.warn(`HF ${model} failed:`, err)
                     errors.push(`HF ${model}: ${err.message}`)
                 }
-            }
-        }
-
-        // 2. Try Gemini (if key provided)
-        if (this.apiKey) {
-            try {
-                result = await this.generateWithGemini(prompt, 'imagen-3.0-generate-001')
-                if (result) return result
-            } catch (err) {
-                errors.push(`Gemini: ${err.message}`)
             }
         }
 
@@ -137,34 +139,67 @@ class ImageGenerationService {
         })
     }
 
+    /**
+     * Generate image using Gemini 2.0 Flash/Pro with generateContent API
+     * Uses responseModalities: ["IMAGE"] for native image generation
+     */
     async generateWithGemini(prompt, model) {
-        const response = await fetch(`${this.baseUrl}/models/${model}:predict?key=${this.apiKey}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                instances: [{ prompt: prompt }],
-                parameters: { sampleCount: 1, aspectRatio: "1:1" }
-            })
-        })
+        // Try multiple Gemini models that support image generation
+        const geminiImageModels = [
+            'gemini-2.0-flash-exp',      // Experimental with image gen
+            'gemini-2.0-flash',          // Stable 2.0 Flash
+            'gemini-1.5-pro',            // 1.5 Pro fallback
+        ]
 
-        if (!response.ok) {
-            const error = await response.json()
-            throw new Error(error.error?.message || `Failed to generate with ${model}`)
+        for (const geminiModel of geminiImageModels) {
+            try {
+                console.log(`Trying Gemini image generation with: ${geminiModel}`)
+
+                const response = await fetch(`${this.baseUrl}/models/${geminiModel}:generateContent?key=${this.apiKey}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [{ text: prompt }]
+                        }],
+                        generationConfig: {
+                            responseModalities: ["IMAGE", "TEXT"],
+                            responseMimeType: "image/png"
+                        }
+                    })
+                })
+
+                if (!response.ok) {
+                    const error = await response.json()
+                    console.warn(`${geminiModel} failed:`, error)
+                    continue // Try next model
+                }
+
+                const data = await response.json()
+
+                // Look for image in response parts
+                const parts = data.candidates?.[0]?.content?.parts || []
+                for (const part of parts) {
+                    if (part.inlineData?.data) {
+                        const mimeType = part.inlineData.mimeType || 'image/png'
+                        return {
+                            status: 'COMPLETED',
+                            image: `data:${mimeType};base64,${part.inlineData.data}`,
+                            meta: { provider: 'gemini', model: geminiModel }
+                        }
+                    }
+                }
+
+                console.warn(`${geminiModel} returned no image data`)
+
+            } catch (err) {
+                console.warn(`Gemini ${geminiModel} error:`, err)
+            }
         }
 
-        const data = await response.json()
-        const prediction = data.predictions?.[0]
-        const imageBase64 = prediction?.bytesBase64Encoded || prediction?.image?.bytesBase64Encoded
-
-        if (!imageBase64) throw new Error('No image returned from Gemini')
-
-        return {
-            status: 'COMPLETED',
-            image: `data:image/png;base64,${imageBase64}`,
-            meta: data
-        }
+        throw new Error('All Gemini models failed to generate image')
     }
 
     async generateWithReplicate(prompt, options) {

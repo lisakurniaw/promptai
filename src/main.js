@@ -1387,19 +1387,24 @@ window.regenerateMasterImage = async function () {
   }
 
   try {
-    // Initialize service
+    // Initialize service with ALL available keys
     imageService.init({
       geminiApiKey: state.apiKeys.gemini,
-      replicateApiKey: state.apiKeys.replicate
+      replicateApiKey: state.apiKeys.replicate,
+      huggingFaceToken: state.apiKeys.huggingFace
     })
 
-    // 1. Analyze Product Image (Gemini Vision)
-    let productDescription = state.project.productName // Default fallback
-    if (state.project.productImage) {
+    // 1. Analyze Product Image (Gemini Vision) - Only if Gemini key available
+    let productDescription = state.project.productName || 'a product' // Default fallback
+    if (state.project.productImage && state.apiKeys.gemini) {
+      console.log('Analyzing product image with Gemini Vision...')
       const analysis = await imageService.analyzeImage(state.project.productImage)
       if (analysis) {
         productDescription = analysis
+        console.log('Product analysis result:', productDescription)
       }
+    } else {
+      console.log('Skipping vision analysis (no Gemini key or no product image)')
     }
 
     // 2. Get Persona Details (Lookup)
@@ -1420,12 +1425,16 @@ window.regenerateMasterImage = async function () {
     The photography style is ${state.project.stylePreset}, photorealistic, 4k, sharp focus, cinematic lighting.
     The product should be prominently featured.`
 
+    console.log('Generating image with prompt:', prompt)
+
     // 4. Generate Image
     const result = await imageService.generateImage(prompt, {
       seed: state.project.seed,
       width: 1024,
       height: 1024
     })
+
+    console.log('Generation result:', result)
 
     if (preview) {
       preview.innerHTML = `
@@ -1438,9 +1447,15 @@ window.regenerateMasterImage = async function () {
       `
     }
 
-    // Save master image to project state
+    // Save master image to project state - CRITICAL for navigation
     state.project.masterImage = result.image
-    showToast('Master image generated successfully!', 'success')
+    console.log('Master image saved to state:', !!state.project.masterImage)
+
+    if (result.isFallback) {
+      showToast('Image generated (simulation mode)', 'warning')
+    } else {
+      showToast('Master image generated successfully!', 'success')
+    }
 
   } catch (error) {
     console.error('Generation failed:', error)
