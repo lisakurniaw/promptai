@@ -45,11 +45,12 @@ class ImageGenerationService {
             }
         }
 
-        // 2. Try Gemini (Multiple Versions)
+        // 2. Try Gemini (Multiple Versions including Imagen 2/3)
         if (this.apiKey) {
             const geminiModels = [
                 'imagen-3.0-generate-001',
-                'image-generation-001'
+                'image-generation-001',
+                'image-generation-002' // Imagen 2
             ]
 
             for (const model of geminiModels) {
@@ -145,11 +146,8 @@ class ImageGenerationService {
     }
 
     async generateWithReplicate(prompt, options) {
-        // ... (Replicate implementation remains same, simplified for brevity in this tool call logic update)
-        // Note: For this tool call, I am focusing on the logic flow. 
-        // I will rely on the previous Replicate implementation or if I need to preserve it exactly, 
-        // I should have included it. Since I'm replacing a large block, I must assume I need to rewrite it or it will be lost.
-        // Re-implementing simplified Replicate for safety:
+        // Use Flux Schnell for fast, high quality generation
+        const model = "black-forest-labs/flux-schnell" // Optimized
 
         const response = await fetch('https://api.replicate.com/v1/predictions', {
             method: 'POST',
@@ -158,12 +156,18 @@ class ImageGenerationService {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                version: "latest",
-                input: { prompt: prompt, aspect_ratio: "1:1", output_format: "png", go_fast: true }
+                version: "latest", // Simplified for Flux
+                input: {
+                    prompt: prompt,
+                    aspect_ratio: "1:1",
+                    output_format: "png",
+                    go_fast: true
+                }
             })
         })
 
         if (!response.ok) throw new Error('Replicate API failed')
+
         let prediction = await response.json()
 
         while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
@@ -183,52 +187,53 @@ class ImageGenerationService {
     }
 
     /**
-     * Analyze an image using Google Gemini 1.5 Flash
+     * Analyze an image using Google Gemini (2.0 Flash Exp / 1.5 Pro)
      * @param {string} base64Image - The image to analyze
      * @returns {Promise<string>} - The description of the image where the product is located
      */
     async analyzeImage(base64Image) {
         if (!this.apiKey) {
-            // Return generic if no key (will be handled by caller)
             return ""
         }
 
-        try {
-            // Clean base64 string
-            const imagePart = base64Image.split(',')[1] || base64Image
+        // Try newer models first
+        const visionModels = [
+            'gemini-2.0-flash-exp', // Latest Experimental
+            'gemini-1.5-pro',
+            'gemini-1.5-flash'
+        ]
 
-            const response = await fetch(`${this.baseUrl}/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    contents: [{
-                        parts: [
-                            { text: "Describe this product image in high detail. Focus on the main product, its visual features, colors, materials, and key identifiers. Do not describe the background. Output a single paragraph description." },
-                            {
-                                inline_data: {
-                                    mime_type: "image/jpeg", // Assuming jpeg/png, API is flexible
-                                    data: imagePart
-                                }
-                            }
-                        ]
-                    }]
+        for (const model of visionModels) {
+            try {
+                const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '')
+
+                const response = await fetch(`${this.baseUrl}/models/${model}:generateContent?key=${this.apiKey}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: "Describe this product in detail in one sentence. Focus on the main object." },
+                                { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } }
+                            ]
+                        }]
+                    })
                 })
-            })
 
-            if (!response.ok) {
-                console.warn('Gemini vision analysis failed')
-                return ""
+                if (!response.ok) continue // Try next model
+
+                const data = await response.json()
+                const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+                if (text) return text
+
+            } catch (e) {
+                console.warn(`Vision analysis failed for ${model}`, e)
             }
-
-            const data = await response.json()
-            return data.candidates?.[0]?.content?.parts?.[0]?.text || ""
-
-        } catch (error) {
-            console.error('Image analysis error:', error)
-            return ""
         }
+
+        return ""
     }
 }
 
