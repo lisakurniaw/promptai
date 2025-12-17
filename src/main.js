@@ -26,8 +26,7 @@ const state = {
   apiKeys: {
     gemini: localStorage.getItem('gemini_api_key') || '',
     replicate: localStorage.getItem('replicate_api_key') || '',
-    bananaApiKey: localStorage.getItem('banana_api_key') || '',
-    bananaModelKey: localStorage.getItem('banana_model_key') || ''
+    huggingFace: localStorage.getItem('hf_api_key') || ''
   }
 }
 
@@ -822,13 +821,21 @@ function renderSettings() {
       <div style="max-width: 600px;">
         <!-- API Keys -->
         <div class="card mb-3">
-          <h3 class="mb-2">🔑 API Keys for Video Generation</h3>
+          <h3 class="mb-2">🔑 API Keys for Generation</h3>
           <p class="text-secondary mb-3" style="font-size: 0.875rem;">
-            Add at least one API key to enable direct video generation. Videos will be generated using Google Veo or Replicate.
+            Add keys to enable generation features. Hugging Face is recommended for images via browser.
           </p>
           
           <div class="form-group">
-            <label class="form-label">Google Gemini API Key (for Veo)</label>
+            <label class="form-label">Hugging Face Access Token (Recommended for Images)</label>
+            <input class="form-input" type="password" id="hf-api-key" 
+              placeholder="hf_..." 
+              value="${state.apiKeys.huggingFace ? '••••••••••••' : ''}">
+            <small class="text-muted">Get free token from <a href="https://huggingface.co/settings/tokens" target="_blank">Hugging Face Settings</a> (Read permission)</small>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Google Gemini API Key (for Video/Veo)</label>
             <input class="form-input" type="password" id="gemini-api-key" 
               placeholder="AIza..." 
               value="${state.apiKeys.gemini ? '••••••••••••' : ''}">
@@ -1273,9 +1280,15 @@ window.togglePrompts = function () {
 // Settings Functions
 // ============================================
 window.saveSettings = function () {
+  const hfKey = document.getElementById('hf-api-key')?.value
   const geminiKey = document.getElementById('gemini-api-key')?.value
   const replicateKey = document.getElementById('replicate-api-key')?.value
+
   // Only save if not the masked value
+  if (hfKey && !hfKey.includes('•')) {
+    localStorage.setItem('hf_api_key', hfKey)
+    state.apiKeys.huggingFace = hfKey
+  }
   if (geminiKey && !geminiKey.includes('•')) {
     localStorage.setItem('gemini_api_key', geminiKey)
     state.apiKeys.gemini = geminiKey
@@ -1293,7 +1306,9 @@ window.saveSettings = function () {
   })
 
   imageService.init({
-    geminiApiKey: state.apiKeys.gemini
+    geminiApiKey: state.apiKeys.gemini,
+    replicateApiKey: state.apiKeys.replicate,
+    huggingFaceToken: state.apiKeys.huggingFace
   })
 
   showToast('Settings saved successfully!', 'success')

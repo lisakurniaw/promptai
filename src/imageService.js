@@ -8,39 +8,96 @@ class ImageGenerationService {
         this.apiKey = ''
         this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta'
         this.replicateApiKey = ''
+        this.huggingFaceToken = ''
     }
 
     init(config) {
         this.apiKey = config.geminiApiKey || config.bananaApiKey || '' // Fallback for transition
         this.replicateApiKey = config.replicateApiKey || ''
+        this.huggingFaceToken = config.huggingFaceToken || ''
     }
 
     /**
-     * Generate an image using Google Gemini (Imagen 3) or Replicate (Flux/SDXL)
+     * Generate an image using available providers (Hugging Face -> Gemini -> Replicate)
      * @param {string} prompt - The positive prompt
      * @param {object} options - Additional options
      * @returns {Promise<object>} - The result containing the image base64 or URL
      */
     async generateImage(prompt, options = {}) {
-        // Try Gemini first if key exists
-        if (this.apiKey) {
+        const errors = []
+
+        // 1. Try Hugging Face (Best for Client-Side CORS)
+        if (this.huggingFaceToken) {
             try {
-                return await this.generateWithGemini(prompt, options)
-            } catch (geminiError) {
-                console.warn('Gemini generation failed, trying fallback...', geminiError)
-                // If Replicate key exists, fall through to Replicate
-                if (!this.replicateApiKey) {
-                    throw geminiError // No fallback, throw original error
-                }
+                return await this.generateWithHuggingFace(prompt, options)
+            } catch (err) {
+                console.warn('HF Generation failed:', err)
+                errors.push(`HuggingFace: ${err.message}`)
             }
         }
 
-        // Try Replicate if Gemini not configured or failed
-        if (this.replicateApiKey) {
-            return await this.generateWithReplicate(prompt, options)
+        // 2. Try Gemini
+        if (this.apiKey) {
+            try {
+                return await this.generateWithGemini(prompt, options)
+            } catch (err) {
+                console.warn('Gemini Generation failed:', err)
+                errors.push(`Gemini: ${err.message}`)
+            }
         }
 
-        throw new Error('No valid API Key configured for Image Generation (Gemini or Replicate)')
+        // 3. Try Replicate (Often fails CORS on client-side, but kept as backup)
+        if (this.replicateApiKey) {
+            try {
+                return await this.generateWithReplicate(prompt, options)
+            } catch (err) {
+                console.warn('Replicate Generation failed:', err)
+                errors.push(`Replicate: ${err.message}`)
+            }
+        }
+
+        throw new Error('All providers failed. Please check your API Keys (Recommended: Hugging Face for browser usage). Details: ' + errors.join(', '))
+    }
+
+    async generateWithHuggingFace(prompt, options) {
+        // Use Flux.1 Dev or SDXL
+        const model = "black-forest-labs/FLUX.1-dev"
+
+        const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.huggingFaceToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                inputs: prompt,
+                parameters: {
+                    aspect_ratio: "1:1", // Note: HF API params vary by model, usually just inputs for simple inference
+                    width: 1024,
+                    height: 1024
+                }
+            })
+        })
+
+        if (!response.ok) {
+            const error = await response.json()
+            throw new Error(error.error || 'Failed to fetch from Hugging Face')
+        }
+
+        // HF returns a generic blob (image/jpeg)
+        const blob = await response.blob()
+
+        // Convert blob to base64
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve({
+                status: 'COMPLETED',
+                image: reader.result,
+                meta: { provider: 'huggingface', model: model }
+            })
+            reader.onerror = reject
+            reader.readAsDataURL(blob)
+        })
     }
 
     async generateWithGemini(prompt, options) {
