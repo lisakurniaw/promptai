@@ -1374,7 +1374,8 @@ window.regenerateMasterImage = async function () {
   try {
     // Initialize service
     imageService.init({
-      geminiApiKey: state.apiKeys.gemini
+      geminiApiKey: state.apiKeys.gemini,
+      replicateApiKey: state.apiKeys.replicate
     })
 
     // 1. Analyze Product Image (Gemini Vision)
