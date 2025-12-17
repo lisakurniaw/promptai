@@ -79,7 +79,57 @@ class ImageGenerationService {
             throw error
         }
     }
+
+    /**
+     * Analyze an image using Google Gemini 1.5 Flash
+     * @param {string} base64Image - The image to analyze
+     * @returns {Promise<string>} - The description of the image where the product is located
+     */
+    async analyzeImage(base64Image) {
+        if (!this.apiKey) {
+            // Return generic if no key (will be handled by caller)
+            return ""
+        }
+
+        try {
+            // Clean base64 string
+            const imagePart = base64Image.split(',')[1] || base64Image
+
+            const response = await fetch(`${this.baseUrl}/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { text: "Describe this product image in high detail. Focus on the main product, its visual features, colors, materials, and key identifiers. Do not describe the background. Output a single paragraph description." },
+                            {
+                                inline_data: {
+                                    mime_type: "image/jpeg", // Assuming jpeg/png, API is flexible
+                                    data: imagePart
+                                }
+                            }
+                        ]
+                    }]
+                })
+            })
+
+            if (!response.ok) {
+                console.warn('Gemini vision analysis failed')
+                return ""
+            }
+
+            const data = await response.json()
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || ""
+
+        } catch (error) {
+            console.error('Image analysis error:', error)
+            return ""
+        }
+    }
 }
+
 
 // Export singleton
 export const imageService = new ImageGenerationService()

@@ -1347,7 +1347,7 @@ window.regenerateMasterImage = async function () {
   if (preview) {
     preview.innerHTML = `
       <div class="spinner mb-2" style="margin: 0 auto;"></div>
-      <p class="text-secondary">Generating master image with Google Gemini...</p>
+      <p class="text-secondary">Analyzing product & generating scene...</p>
       <p class="text-muted" style="font-size: 0.75rem;">Seed: ${state.project.seed}</p>
     `
   }
@@ -1377,9 +1377,34 @@ window.regenerateMasterImage = async function () {
       geminiApiKey: state.apiKeys.gemini
     })
 
-    // Construct prompt
-    const prompt = `Professional product photography of ${state.project.productName}, ${state.project.background}, ${state.project.stylePreset} style, high quality, 4k, photorealistic`
+    // 1. Analyze Product Image (Gemini Vision)
+    let productDescription = state.project.productName // Default fallback
+    if (state.project.productImage) {
+      const analysis = await imageService.analyzeImage(state.project.productImage)
+      if (analysis) {
+        productDescription = analysis
+      }
+    }
 
+    // 2. Get Persona Details (Lookup)
+    const personas = [
+      { id: 1, desc: 'Professional Asian woman, 25-30 years old, fair skin, business attire' },
+      { id: 2, desc: 'Casual Asian man, 20-25 years old, tan skin, street style' },
+      { id: 3, desc: 'Elegant Asian woman, 30-40 years old, medium skin, evening wear' },
+      { id: 4, desc: 'Energetic Asian man, 25-30 years old, medium skin, sportswear' },
+      { id: 5, desc: 'Friendly young Asian woman, 18-24 years old, fair skin, casual trendy' },
+      { id: 6, desc: 'Mature Asian woman, 40+ years old, tan skin, sophisticated style' },
+    ]
+    const selectedPersona = personas.find(p => p.id === state.project.persona)
+    const personaPrompt = selectedPersona ? selectedPersona.desc : 'A professional model'
+
+    // 3. Construct Rich Prompt
+    const prompt = `A high-quality professional product photography shot of ${personaPrompt} posing with ${productDescription}. 
+    They are located in a ${state.project.background.replace(/_/g, ' ')} setting.
+    The photography style is ${state.project.stylePreset}, photorealistic, 4k, sharp focus, cinematic lighting.
+    The product should be prominently featured.`
+
+    // 4. Generate Image
     const result = await imageService.generateImage(prompt, {
       seed: state.project.seed,
       width: 1024,
